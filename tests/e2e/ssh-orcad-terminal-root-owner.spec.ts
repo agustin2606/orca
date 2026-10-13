@@ -149,14 +149,56 @@ test('a managed terminal path link cannot switch to a desktop workspace at the s
       .locator('[data-file-explorer-row]')
       .filter({ hasText: 'OWNER_SUBDIRECTORY' })
       .click({ button: 'right' })
+    await page.evaluate(() => {
+      const w = window as unknown as { __diag: string[]; __diagTimer: unknown }
+      w.__diag = []
+      const start = Date.now()
+      let last = ''
+      w.__diagTimer = setInterval(() => {
+        const st = window.__store?.getState()
+        const wt = st?.activeWorktreeId ?? ''
+        const line = JSON.stringify({
+          wt: wt.slice(-12),
+          at: st?.activeTabId,
+          att: st?.activeTabType,
+          atw: st?.activeTabIdByWorktree?.[wt],
+          tabs: (st?.tabsByWorktree?.[wt] ?? []).map((t) => [
+            t.id,
+            t.ptyId,
+            t.pendingActivationSpawn ?? null
+          ]),
+          panes: [...(window.__paneManagers?.keys() ?? [])]
+        })
+        if (line !== last) {
+          w.__diag.push(`${Date.now() - start} ${line}`)
+          last = line
+        }
+      }, 25)
+    })
     await page.getByRole('menuitem', { name: 'Open in Terminal', exact: true }).click()
-    await waitForActivePanePtyId(page, 30_000)
+    const diagPty = await waitForActivePanePtyId(page, 30_000)
+    const diagAt = await page.evaluate(() => {
+      const st = window.__store?.getState()
+      return { at: st?.activeTabId, att: st?.activeTabType }
+    })
     await focusActiveTerminalInput(page)
     await page.keyboard.insertText('pwd; cat TERMINAL_OWNER.txt')
     await page.keyboard.press('Enter')
+    const dump = async () => {
+      const lines = await page.evaluate(() => (window as unknown as { __diag: string[] }).__diag)
+      console.log('[diag waited pty]', diagPty, JSON.stringify(diagAt))
+      for (const line of lines.slice(0, 60)) {
+        console.log('[diag]', line)
+      }
+    }
     await expect
       .poll(() => getTerminalContent(page), { timeout: 30_000 })
       .toContain('REMOTE_TERMINAL_DIRECTORY_OWNER')
+      .catch(async (error) => {
+        await dump()
+        throw error
+      })
+    await dump()
     console.log('[actual-managed-terminal]', await getTerminalContent(page))
     execute(
       `mkdir -p ${quotePosixShell(intermediate)} && printf 'REMOTE_LINK_DIRECTORY_OWNER\n' > ${quotePosixShell(path.join(intermediate, 'LINK_DIRECTORY_OWNER.txt'))}`
