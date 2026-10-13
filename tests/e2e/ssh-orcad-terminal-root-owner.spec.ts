@@ -175,6 +175,43 @@ test('a managed terminal path link cannot switch to a desktop workspace at the s
         }
       }, 25)
     })
+    const hostLog: string[] = []
+    const hostStart = Date.now()
+    let hostLast = ''
+    const hostPoll = (async () => {
+      while (Date.now() - hostStart < 6000) {
+        const listed = await serverCall(page, environmentId, 'session.tabs.list', {
+          worktree: `id:${seeded.worktreeId}`
+        }).catch((error) => ({ error: String(error) }))
+        const result = (
+          listed as {
+            result?: {
+              snapshotVersion?: number
+              publicationEpoch?: string
+              tabs?: Record<string, unknown>[]
+            }
+          }
+        ).result
+        const line = JSON.stringify({
+          v: result?.snapshotVersion,
+          e: result?.publicationEpoch?.slice(-20),
+          rows: result?.tabs
+            ?.filter((tab) => tab.type === 'terminal')
+            .map((tab) => [
+              tab.id,
+              tab.ptyId ?? null,
+              tab.terminal ?? null,
+              tab.status ?? null,
+              tab.incarnationId ?? null
+            ])
+        })
+        if (line !== hostLast) {
+          hostLog.push(`${Date.now() - hostStart} ${line}`)
+          hostLast = line
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+    })()
     await page.getByRole('menuitem', { name: 'Open in Terminal', exact: true }).click()
     const diagPty = await waitForActivePanePtyId(page, 30_000)
     const diagAt = await page.evaluate(() => {
@@ -185,6 +222,11 @@ test('a managed terminal path link cannot switch to a desktop workspace at the s
     await page.keyboard.insertText('pwd; cat TERMINAL_OWNER.txt')
     await page.keyboard.press('Enter')
     const dump = async () => {
+      await hostPoll
+      for (const line of hostLog) {
+        console.log('[diag host]', line)
+      }
+      console.log('[diag content]', JSON.stringify(await getTerminalContent(page)))
       const lines = await page.evaluate(() => (window as unknown as { __diag: string[] }).__diag)
       console.log('[diag waited pty]', diagPty, JSON.stringify(diagAt))
       for (const line of lines.slice(0, 60)) {
